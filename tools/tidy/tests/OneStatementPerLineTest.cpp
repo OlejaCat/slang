@@ -137,3 +137,16 @@ module top(); logic a, b; initial begin a = b; b = a; end endmodule
 )");
     CHECK_FALSE(result);
 }
+
+TEST_CASE("OneStatementPerLine: Sibling after nested statement on same line") {
+    auto result = runCheckTest("OneStatementPerLine", R"(
+module top();
+    logic a, b, c;
+    initial begin
+        if (a)
+            b = c; c = b;
+    end
+endmodule
+)");
+    CHECK_FALSE(result);
+}

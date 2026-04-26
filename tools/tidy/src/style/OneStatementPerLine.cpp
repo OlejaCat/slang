@@ -1,5 +1,6 @@
 #include "ASTHelperVisitors.h"
 #include "TidyDiags.h"
+#include <optional>
 
 using namespace slang;
 using namespace slang::ast;
@@ -8,7 +9,11 @@ namespace one_statement_per_line {
 
 struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::AllCanonical> {
     const SourceManager* source_manager;
-    size_t lastLine = 0;
+
+    std::optional<size_t> lastLine = std::nullopt;
+
+    size_t lastDepth = 0;
+    size_t currentDepth = 0;
 
     MainVisitor(Diagnostics& diagnostics, const SourceManager* source_manager) :
         TidyVisitor(diagnostics), source_manager(source_manager) {}
@@ -17,7 +22,9 @@ struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::All
         requires std::derived_from<T, Statement>
     void handle(const T& statement) {
         if constexpr (std::is_same_v<T, StatementList> || std::is_same_v<T, BlockStatement>) {
+            ++currentDepth;
             visitDefault(statement);
+            --currentDepth;
             return;
         }
 
@@ -33,16 +40,18 @@ struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::All
 
         size_t currentLine = source_manager->getLineNumber(startLocation);
 
-        if (currentLine != 0 && currentLine == lastLine) {
-            diags.add(diag::OneStatementPerLine, startLocation);
+        if (lastLine.has_value() && currentLine == lastLine.value()) {
+            if (lastDepth >= currentDepth) {
+                diags.add(diag::OneStatementPerLine, startLocation);
+            }
         }
 
-        size_t previousNeighborLine = currentLine;
-        lastLine = 0;
+        lastLine = currentLine;
+        lastDepth = currentDepth;
 
+        ++currentDepth;
         visitDefault(statement);
-
-        lastLine = previousNeighborLine;
+        --currentDepth;
     }
 };
 
