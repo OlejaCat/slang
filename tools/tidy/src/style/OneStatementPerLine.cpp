@@ -1,5 +1,7 @@
 #include "ASTHelperVisitors.h"
 #include "TidyDiags.h"
+#include <cstddef>
+#include <map>
 #include <optional>
 
 using namespace slang;
@@ -7,13 +9,15 @@ using namespace slang::ast;
 
 namespace one_statement_per_line {
 
+struct StatementData {
+    SourceLocation location;
+    int32_t level;
+};
+
 struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::AllCanonical> {
     const SourceManager* source_manager;
 
-    std::optional<size_t> lastLine = std::nullopt;
-
-    size_t lastDepth = 0;
-    size_t currentDepth = 0;
+    std::map<size_t, std::vector<StatementData>> statementsPerLine;
 
     MainVisitor(Diagnostics& diagnostics, const SourceManager* source_manager) :
         TidyVisitor(diagnostics), source_manager(source_manager) {}
@@ -22,13 +26,11 @@ struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::All
         requires std::derived_from<T, Statement>
     void handle(const T& statement) {
         if constexpr (std::is_same_v<T, StatementList> || std::is_same_v<T, BlockStatement>) {
-            ++currentDepth;
             visitDefault(statement);
-            --currentDepth;
             return;
         }
 
-        if (statement.kind == StatementKind::Invalid ||
+        if (statement.kind == StatementKind::Invalid || statement.kind == StatementKind::Empty ||
             statement.kind == StatementKind::VariableDeclaration) {
             return;
         }
@@ -40,18 +42,59 @@ struct MainVisitor : public TidyVisitor, ASTVisitor<MainVisitor, VisitFlags::All
 
         size_t currentLine = source_manager->getLineNumber(startLocation);
 
-        if (lastLine.has_value() && currentLine == lastLine.value()) {
-            if (lastDepth >= currentDepth) {
-                diags.add(diag::OneStatementPerLine, startLocation);
+        statementsPerLine[currentLine].push_back(
+            {startLocation, getHierarchyLevel(statement.kind)});
+        visitDefault(statement);
+    }
+
+    void checkStatementsOneLine() {
+        for (const auto& [line, statements] : statementsPerLine) {
+            if (statements.size() <= 1) {
+                continue;
+            }
+
+            for (size_t i = 0; i < statements.size() - 1; ++i) {
+                if (statements[i].level <= statements[i + 1].level) {
+                    diags.add(diag::OneStatementPerLine, statements[i + 1].location);
+                    break;
+                }
             }
         }
+    }
 
-        lastLine = currentLine;
-        lastDepth = currentDepth;
+private:
+    int32_t getHierarchyLevel(StatementKind kind) const {
+        switch (kind) {
+            // block statements
+            case StatementKind::Block:
+                return 5;
 
-        ++currentDepth;
-        visitDefault(statement);
-        --currentDepth;
+            // procedural timing controls
+            case StatementKind::Timed:
+                return 4;
+
+            // looping statements
+            case StatementKind::ForeverLoop:
+            case StatementKind::RepeatLoop:
+            case StatementKind::WhileLoop:
+            case StatementKind::DoWhileLoop:
+            case StatementKind::ForLoop:
+            case StatementKind::ForeachLoop:
+                return 3;
+
+            // case statement
+            case StatementKind::Case:
+            case StatementKind::PatternCase:
+            case StatementKind::RandCase:
+                return 2;
+
+            // conditional statements
+            case StatementKind::Conditional:
+                return 1;
+
+            default:
+                return 0;
+        }
     }
 };
 
@@ -69,6 +112,9 @@ public:
 
         MainVisitor visitor(diagnostics, source_manager);
         root.visit(visitor);
+
+        visitor.checkStatementsOneLine();
+
         return diagnostics.empty();
     }
 

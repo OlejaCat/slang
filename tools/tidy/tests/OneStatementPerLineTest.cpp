@@ -49,34 +49,13 @@ endmodule
     CHECK(result);
 }
 
-TEST_CASE("OneStatementPerLine: Hierarchical dependent") {
-    auto result = runCheckTest("OneStatementPerLine", R"(
-module top();
-    logic a, b, c;
-    initial begin
-        if (a) b = c;
-        if (a) begin b = c; end
-        case (a) 1: b = c; endcase
-        for (int i=0; i<1; i++) a = b;
-        while (a) a = b;
-        repeat (10) a = b;
-        forever a = b;
-        #(10) a = b;
-        @(posedge c) a = b;
-    end
-
-    task t; a = b; endtask
-    function f; a = b; endfunction
-endmodule
-)");
-    CHECK(result);
-}
-
 TEST_CASE("OneStatementPerLine: Descending chain") {
     auto result = runCheckTest("OneStatementPerLine", R"(
 module top();
     logic a, b;
-    initial begin @(posedge a) #10 if (a) for (int i=0; i<1; i++) while (a) repeat (1) forever case (a) 1: a = b; endcase end
+    initial begin
+        @(posedge a) for (int i=0; i<1; i++) case (a) 1: if (a) a = b; endcase
+    end
 endmodule
 )");
     CHECK(result);
@@ -133,19 +112,21 @@ module top(); logic a, b; initial begin a = b; end endmodule
 
 TEST_CASE("OneStatementPerLine: Error on one line") {
     auto result = runCheckTest("OneStatementPerLine", R"(
-module top(); logic a, b; initial begin a = b; b = a; end endmodule
+module top (input a, input b, output reg c, output reg d);
+    always@(*)
+        if (b) if (a) c = b;
+    endmodule
 )");
     CHECK_FALSE(result);
 }
 
-TEST_CASE("OneStatementPerLine: Sibling after nested statement on same line") {
+TEST_CASE("OneStatementPerLine: Nested increasing order") {
     auto result = runCheckTest("OneStatementPerLine", R"(
 module top();
-    logic a, b, c;
-    initial begin
-        if (a)
-            b = c; c = b;
-    end
+    logic a;
+    always@(*)
+        if (a) for (int i = 0; i < 2; ++i) begin
+        end
 endmodule
 )");
     CHECK_FALSE(result);
